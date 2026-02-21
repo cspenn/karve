@@ -23,6 +23,10 @@ output/
 # Claude Code project state
 .claude/
 
+# Private — not distributed publicly
+docs/
+tests/
+
 # Coverage artifacts
 .coverage
 
