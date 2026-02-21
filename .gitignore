@@ -26,6 +26,7 @@ output/
 # Private — not distributed publicly
 docs/
 tests/
+checkpython.sh
 
 # Coverage artifacts
 .coverage
