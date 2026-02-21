@@ -124,6 +124,32 @@ Alternatively, register via the CLI:
 claude mcp add openviking -s user -- uv --project /path/to/karve run python -m src.openviking_mcp_server
 ```
 
+### Project-scoped memory
+
+By default all tools use the global `viking://` namespace, so memories from different projects can mix. To isolate memory per project, add a `KARVE_PROJECT` env var in a **project-level** `.mcp.json` at your project root:
+
+```json
+{
+  "mcpServers": {
+    "openviking": {
+      "command": "uv",
+      "args": ["--project", "/path/to/karve", "run", "python", "-m", "src.openviking_mcp_server"],
+      "env": {
+        "KARVE_PROJECT": "my-project-name"
+      }
+    }
+  }
+}
+```
+
+When `KARVE_PROJECT` is set:
+
+- Searches default to `viking://user/projects/my-project-name/` instead of `viking://`
+- `viking_remember` stores at `viking://user/projects/my-project-name/<category>/`
+- Global search is still available by passing `uri="viking://"` explicitly
+
+Without `KARVE_PROJECT`, all tools use the global `viking://` namespace (original behaviour).
+
 ---
 
 ## MCP Tools

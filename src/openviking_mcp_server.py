@@ -97,6 +97,8 @@ _DEFAULT_OPENVIKING_URL: str = "http://localhost:1933"
 _OPENVIKING_URL = _runtime.openviking_url if _runtime else _DEFAULT_OPENVIKING_URL
 _CONTENT_PREVIEW_LEN: int = 300
 _DASHBOARD_HOST: str = "127.0.0.1"
+_PROJECT: str = os.getenv("KARVE_PROJECT", "")
+_DEFAULT_URI: str = f"viking://user/projects/{_PROJECT}/" if _PROJECT else "viking://"
 
 
 # ─── Connection manager ───────────────────────────────────────────────────────
@@ -291,21 +293,23 @@ mcp = FastMCP("OpenViking", lifespan=_lifespan)
 
 
 @mcp.tool
-def viking_search(query: str, uri: str = "viking://", limit: int = 5) -> str:
+def viking_search(query: str, uri: str | None = None, limit: int = 5) -> str:
     """Search OpenViking for relevant memories, resources, and skills.
 
     Uses semantic similarity for quick lookups of stored context.
 
     Args:
         query: What to search for.
-        uri: Scope the search (e.g. 'viking://user/' for user memories only).
+        uri: Scope the search. Defaults to the project scope when KARVE_PROJECT
+             is set, otherwise the global 'viking://' namespace.
         limit: Max results to return.
 
     Returns:
         Formatted Markdown list of matching items with relevance scores.
     """
+    effective_uri = uri if uri is not None else _DEFAULT_URI
     try:
-        results = _viking.get().find(query, target_uri=uri, limit=limit)
+        results = _viking.get().find(query, target_uri=effective_uri, limit=limit)
         return _fmt_results(results)
     except (OpenVikingError, OSError) as exc:
         logger.error("viking_search failed: %s", exc)
@@ -313,21 +317,23 @@ def viking_search(query: str, uri: str = "viking://", limit: int = 5) -> str:
 
 
 @mcp.tool
-def viking_deep_search(query: str, uri: str = "viking://", limit: int = 5) -> str:
+def viking_deep_search(query: str, uri: str | None = None, limit: int = 5) -> str:
     """Intent-aware search with query expansion for better recall.
 
     Slower than viking_search but analyzes context and expands search terms.
 
     Args:
         query: What to search for — natural language works well.
-        uri: Scope the search.
+        uri: Scope the search. Defaults to the project scope when KARVE_PROJECT
+             is set, otherwise the global 'viking://' namespace.
         limit: Max results.
 
     Returns:
         Formatted Markdown with query expansion plan and matching items.
     """
+    effective_uri = uri if uri is not None else _DEFAULT_URI
     try:
-        results = _viking.get().search(query, target_uri=uri, limit=limit)
+        results = _viking.get().search(query, target_uri=effective_uri, limit=limit)
         plan = getattr(results, "query_plan", [])
         header = f"Query expansion: {plan}\n" if plan else ""
         return header + _fmt_results(results)
@@ -365,20 +371,22 @@ def viking_read(
 
 
 @mcp.tool
-def viking_list(uri: str = "viking://") -> str:
+def viking_list(uri: str | None = None) -> str:
     """Browse the OpenViking context filesystem at a given URI.
 
     Args:
-        uri: Directory URI to list.
+        uri: Directory URI to list. Defaults to the project scope when
+             KARVE_PROJECT is set, otherwise the global 'viking://' namespace.
 
     Returns:
         Formatted directory listing with names and types.
     """
+    effective_uri = uri if uri is not None else _DEFAULT_URI
     try:
-        items = _viking.get().ls(uri)
+        items = _viking.get().ls(effective_uri)
         if not items:
-            return f"Empty: {uri}"
-        lines = [f"Contents of {uri}:"]
+            return f"Empty: {effective_uri}"
+        lines = [f"Contents of {effective_uri}:"]
         for item in items:
             name = getattr(item, "name", str(item))
             kind = getattr(item, "type", "")
@@ -387,8 +395,8 @@ def viking_list(uri: str = "viking://") -> str:
             lines.append(f"  {icon} {name}  {item_uri}")
         return "\n".join(lines)
     except (OpenVikingError, OSError) as exc:
-        logger.error("viking_list failed for %s: %s", uri, exc)
-        return f"viking_list failed for {uri}: {exc}"
+        logger.error("viking_list failed for %s: %s", effective_uri, exc)
+        return f"viking_list failed for {effective_uri}: {exc}"
 
 
 @mcp.tool
@@ -400,14 +408,22 @@ def viking_remember(text: str, category: str = "memory", name: str = "") -> str:
         category: Storage category (e.g. 'memory', 'preference', 'decision').
         name: Optional filename stem (auto-generated if empty).
 
+    Storage target: ``viking://user/projects/<project>/<category>/`` when
+    KARVE_PROJECT is set, otherwise ``viking://user/<category>/``.
+
     Returns:
         Confirmation string with the stored URI.
     """
     tmp_path = _write_temp_resource(text, name)
     try:
+        target = (
+            f"viking://user/projects/{_PROJECT}/{category}/"
+            if _PROJECT
+            else f"viking://user/{category}/"
+        )
         result = _viking.get().add_resource(
             path=tmp_path,
-            target=f"viking://user/{category}/",
+            target=target,
             reason=category,
             wait=True,
         )
