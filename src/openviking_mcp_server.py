@@ -9,16 +9,22 @@ Uses a class-based connection manager with tenacity retry logic.
 import json
 import logging
 import os
+import socket
 import tempfile
+import threading
+import webbrowser
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from typing import Literal
-
-import yaml
-from fastmcp import FastMCP
-from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential
+from typing import Any, Literal
 
 import openviking as ov
+import yaml
+from fastmcp import FastMCP
+from openviking_cli.exceptions import OpenVikingError
+from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -27,9 +33,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(
-            Path(__file__).parent.parent / "logs" / "openviking_mcp.log"
-        ),
+        logging.FileHandler(Path(__file__).parent.parent / "logs" / "openviking_mcp.log"),
     ],
 )
 logger = logging.getLogger("openviking_mcp")
@@ -89,9 +93,10 @@ def _load_runtime() -> RuntimePorts | None:
 
 _creds = _load_credentials()
 _runtime = _load_runtime()
-_OPENVIKING_URL = (
-    _runtime.openviking_url if _runtime else "http://localhost:1933"
-)
+_DEFAULT_OPENVIKING_URL: str = "http://localhost:1933"
+_OPENVIKING_URL = _runtime.openviking_url if _runtime else _DEFAULT_OPENVIKING_URL
+_CONTENT_PREVIEW_LEN: int = 300
+_DASHBOARD_HOST: str = "127.0.0.1"
 
 
 # ─── Connection manager ───────────────────────────────────────────────────────
@@ -105,6 +110,12 @@ class VikingClient:
     """
 
     def __init__(self, url: str, api_key: str) -> None:
+        """Store connection parameters; actual connection deferred to first use.
+
+        Args:
+            url: Base URL of the OpenViking server.
+            api_key: API key for authentication.
+        """
         self._url = url
         self._api_key = api_key
         self._client: ov.SyncHTTPClient | None = None
@@ -145,6 +156,43 @@ _viking = VikingClient(url=_OPENVIKING_URL, api_key=_creds.api_key)
 # ─── Formatting helpers ───────────────────────────────────────────────────────
 
 
+def _get_item_content(item: object) -> str:
+    """Extract preview text from a result item using content/abstract/overview fallbacks.
+
+    Args:
+        item: A result item with optional content, abstract, or overview attributes.
+
+    Returns:
+        Content string truncated to _CONTENT_PREVIEW_LEN, or empty string if absent.
+    """
+    text = (
+        getattr(item, "content", None)
+        or getattr(item, "abstract", None)
+        or getattr(item, "overview", None)
+        or ""
+    )
+    return str(text)[:_CONTENT_PREVIEW_LEN]
+
+
+def _fmt_item(item: object) -> list[str]:
+    """Format a single result item as Markdown bullet lines.
+
+    Args:
+        item: A result item with uri, score, and optional content attributes.
+
+    Returns:
+        One or two lines: the URI bullet and optionally an indented content line.
+    """
+    score = getattr(item, "score", None)
+    uri = getattr(item, "uri", "")
+    score_str = f" (score: {score:.3f})" if score is not None else ""
+    lines = [f"- **{uri}**{score_str}"]
+    content = _get_item_content(item)
+    if content:
+        lines.append(f"  {content}")
+    return lines
+
+
 def _fmt_results(results: object) -> str:
     """Format FindResult or SearchResult into readable Markdown.
 
@@ -161,18 +209,7 @@ def _fmt_results(results: object) -> str:
             continue
         lines.append(f"\n## {category.capitalize()}")
         for item in items:
-            score = getattr(item, "score", None)
-            uri = getattr(item, "uri", "")
-            content = (
-                getattr(item, "content", None)
-                or getattr(item, "abstract", None)
-                or getattr(item, "overview", None)
-                or ""
-            )
-            score_str = f" (score: {score:.3f})" if score is not None else ""
-            lines.append(f"- **{uri}**{score_str}")
-            if content:
-                lines.append(f"  {content[:300]}")
+            lines.extend(_fmt_item(item))
     return "\n".join(lines) if lines else "No results found."
 
 
@@ -181,22 +218,76 @@ def _write_temp_resource(text: str, name: str) -> str:
 
     Args:
         text: Content to write.
-        name: Optional stem for the temp filename.
+        name: Stem appended to the temp filename (empty string for no stem).
 
     Returns:
         Absolute path to the temp file (caller must delete).
     """
     suffix = f"_{name}.md" if name else ".md"
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=suffix, delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as tmp:
         tmp.write(text)
         return tmp.name
 
 
 # ─── MCP server ───────────────────────────────────────────────────────────────
 
-mcp = FastMCP("OpenViking")
+
+def _find_free_port() -> int:
+    """Find an available TCP port on localhost.
+
+    Returns:
+        A free port number.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _make_dashboard_handler(directory: Path) -> type[SimpleHTTPRequestHandler]:
+    """Create an HTTP request handler class bound to a specific directory.
+
+    Args:
+        directory: Path to serve files from.
+
+    Returns:
+        A SimpleHTTPRequestHandler subclass serving from directory.
+    """
+
+    class _Handler(SimpleHTTPRequestHandler):
+        """HTTP request handler serving the dashboard with suppressed access logs."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            """Initialize with a fixed directory."""
+            super().__init__(*args, directory=str(directory), **kwargs)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            """Suppress HTTP access logs — MCP server uses stdio."""
+
+    return _Handler
+
+
+@asynccontextmanager
+async def _lifespan(server: object) -> AsyncGenerator[None, None]:
+    """Start the dashboard HTTP server and open it in a browser on MCP startup.
+
+    Args:
+        server: The FastMCP server instance (unused directly).
+
+    Yields:
+        None — yields control back to FastMCP during server lifetime.
+    """
+    dashboard_dir = Path(__file__).parent.parent
+    port = _find_free_port()
+    httpd = HTTPServer((_DASHBOARD_HOST, port), _make_dashboard_handler(dashboard_dir))
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Dashboard served at http://%s:%d/dashboard.html", _DASHBOARD_HOST, port)
+    webbrowser.open(f"http://{_DASHBOARD_HOST}:{port}/dashboard.html")
+    yield
+    httpd.shutdown()
+
+
+mcp = FastMCP("OpenViking", lifespan=_lifespan)
 
 
 @mcp.tool
@@ -216,7 +307,7 @@ def viking_search(query: str, uri: str = "viking://", limit: int = 5) -> str:
     try:
         results = _viking.get().find(query, target_uri=uri, limit=limit)
         return _fmt_results(results)
-    except Exception as exc:
+    except (OpenVikingError, OSError) as exc:
         logger.error("viking_search failed: %s", exc)
         return f"viking_search failed: {exc}\nRun: ./scripts/start_openviking.sh"
 
@@ -240,7 +331,7 @@ def viking_deep_search(query: str, uri: str = "viking://", limit: int = 5) -> st
         plan = getattr(results, "query_plan", [])
         header = f"Query expansion: {plan}\n" if plan else ""
         return header + _fmt_results(results)
-    except Exception as exc:
+    except (OpenVikingError, OSError) as exc:
         logger.error("viking_deep_search failed: %s", exc)
         return f"viking_deep_search failed: {exc}"
 
@@ -267,8 +358,8 @@ def viking_read(
             "full": client.read,
             "overview": client.overview,
         }
-        return dispatch[depth](uri)
-    except Exception as exc:
+        return str(dispatch[depth](uri))
+    except (OpenVikingError, OSError) as exc:
         logger.error("viking_read failed for %s: %s", uri, exc)
         return f"viking_read failed for {uri}: {exc}"
 
@@ -295,7 +386,7 @@ def viking_list(uri: str = "viking://") -> str:
             icon = "📁" if kind == "directory" else "📄"
             lines.append(f"  {icon} {name}  {item_uri}")
         return "\n".join(lines)
-    except Exception as exc:
+    except (OpenVikingError, OSError) as exc:
         logger.error("viking_list failed for %s: %s", uri, exc)
         return f"viking_list failed for {uri}: {exc}"
 
@@ -320,7 +411,7 @@ def viking_remember(text: str, category: str = "memory", name: str = "") -> str:
             reason=category,
             wait=True,
         )
-    except Exception as exc:
+    except (OpenVikingError, OSError) as exc:
         logger.error("viking_remember failed: %s", exc)
         return f"viking_remember failed: {exc}"
     finally:
@@ -344,9 +435,9 @@ def viking_status() -> str:
         try:
             status = client.get_status()
             return f"✓ OpenViking healthy\n\n{json.dumps(status, indent=2)}"
-        except Exception:
+        except Exception:  # noqa: BLE001
             return f"✓ OpenViking healthy at {_OPENVIKING_URL}"
-    except Exception as exc:
+    except (OpenVikingError, OSError) as exc:
         logger.error("viking_status check failed: %s", exc)
         return (
             f"✗ OpenViking not reachable at {_OPENVIKING_URL}\n"
