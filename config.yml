@@ -1,0 +1,15 @@
+# Application configuration — not secrets (see credentials.yml for secrets)
+
+embedding:
+  model: mlx-community/Qwen3-Embedding-4B-mxfp8
+  base_port: 8000
+  host: 127.0.0.1
+  health_timeout_seconds: 300    # first run downloads ~4GB model
+
+openviking:
+  base_port: 1933
+  host: 127.0.0.1
+  health_timeout_seconds: 20
+
+logging:
+  level: INFO                    # DEBUG | INFO | WARNING | ERROR

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<!-- start dashboard.html -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Karve — OpenViking Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: { gray: { 950: '#030712' } }
+        }
+      }
+    }
+  </script>
+  <style>
+    :root { color-scheme: dark; }
+    body { scrollbar-color: #374151 #111827; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111827; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+  </style>
+</head>
+<body class="dark bg-gray-950 text-gray-100 font-mono min-h-screen">
+
+  <!-- HEADER -->
+  <header class="sticky top-0 z-10 bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-amber-400 text-xl font-bold tracking-widest">KARVE</span>
+      <span class="text-gray-500 text-sm">OpenViking Stack Dashboard</span>
+    </div>
+    <div class="flex items-center gap-4 text-sm">
+      <label class="text-gray-500 text-xs">OpenViking URL</label>
+      <input id="ovUrlInput" type="text" value="http://127.0.0.1:1933"
+        class="bg-gray-800 border border-gray-700 rounded px-3 py-1 text-sm font-mono text-gray-200 w-60 focus:outline-none focus:border-amber-500">
+      <span class="text-gray-600 text-xs">Last updated: <span id="lastUpdated" class="text-gray-400">—</span></span>
+      <span id="refreshDot" class="w-2 h-2 rounded-full bg-amber-400 opacity-60 inline-block"></span>
+    </div>
+  </header>
+
+  <!-- BODY -->
+  <div class="flex gap-4 p-4">
+
+    <!-- MAIN COLUMN -->
+    <main class="flex-1 flex flex-col gap-4 min-w-0">
+
+      <!-- Row 1: Health + System Status -->
+      <div class="flex gap-4">
+        <!-- Health -->
+        <div id="panel-health" class="flex-1 bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">Health</h3>
+            <span class="panel-status text-xs"></span>
+          </div>
+          <div class="panel-body text-sm text-gray-500">Connecting…</div>
+        </div>
+
+        <!-- System Status -->
+        <div id="panel-system" class="flex-1 bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">System Status</h3>
+            <span class="panel-status text-xs"></span>
+          </div>
+          <div class="panel-body text-sm text-gray-500">Connecting…</div>
+        </div>
+      </div>
+
+      <!-- Row 2: Observer Components -->
+      <section class="flex flex-col gap-2">
+        <h2 class="text-xs text-gray-500 uppercase tracking-widest px-1">Observer Components</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <div id="panel-queue" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">Queue</h3>
+              <span class="panel-status text-xs"></span>
+            </div>
+            <div class="panel-body text-sm text-gray-500">Connecting…</div>
+          </div>
+          <div id="panel-vikingdb" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">VikingDB</h3>
+              <span class="panel-status text-xs"></span>
+            </div>
+            <div class="panel-body text-sm text-gray-500">Connecting…</div>
+          </div>
+          <div id="panel-vlm" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">VLM</h3>
+              <span class="panel-status text-xs"></span>
+            </div>
+            <div class="panel-body text-sm text-gray-500">Connecting…</div>
+          </div>
+          <div id="panel-transaction" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">Transaction</h3>
+              <span class="panel-status text-xs"></span>
+            </div>
+            <div class="panel-body text-sm text-gray-500">Connecting…</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- SIDEBAR -->
+    <aside class="w-80 flex-shrink-0 flex flex-col gap-4">
+
+      <!-- Embedding Server -->
+      <div id="panel-embedding" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">Embedding Server</h3>
+          <span class="panel-status text-xs"></span>
+        </div>
+        <div class="panel-body text-sm text-gray-500">Connecting…</div>
+      </div>
+
+      <!-- Active Sessions -->
+      <div id="panel-sessions" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">Active Sessions</h3>
+          <span class="panel-status text-xs"></span>
+        </div>
+        <div class="panel-body text-sm text-gray-500">Connecting…</div>
+      </div>
+
+      <!-- Context FS -->
+      <div id="panel-filesystem" class="bg-gray-900 border border-gray-800 border-l-4 border-l-yellow-500 rounded-lg p-4 flex flex-col gap-2 transition-colors duration-300">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs text-gray-400 uppercase tracking-widest font-bold">Context FS</h3>
+          <span class="panel-status text-xs">viking://</span>
+        </div>
+        <div class="panel-body text-sm text-gray-500">Connecting…</div>
+      </div>
+
+    </aside>
+  </div>
+
+  <script>
+    // ─── State ────────────────────────────────────────────────────────────────
+
+    const state = { ovUrl: 'http://127.0.0.1:1933' };
+    const EMBED_URL = 'http://127.0.0.1:8001';
+    const POLL_MS = 5000;
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    async function apiFetch(url, timeoutMs = 4000) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const resp = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` };
+        const data = await resp.json();
+        return { ok: true, data };
+      } catch (err) {
+        clearTimeout(timer);
+        return { ok: false, error: err.name === 'AbortError' ? 'Timeout' : err.message };
+      }
+    }
+
+    function badge(text, color) {
+      const styles = {
+        green:  'bg-emerald-900/40 text-emerald-400 border border-emerald-700/50',
+        red:    'bg-red-900/40 text-red-400 border border-red-700/50',
+        yellow: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/50',
+        gray:   'bg-gray-800 text-gray-400 border border-gray-700',
+        amber:  'bg-amber-900/40 text-amber-400 border border-amber-700/50',
+      };
+      return `<span class="px-2 py-0.5 rounded text-xs font-mono ${styles[color] || styles.gray}">${text}</span>`;
+    }
+
+    function setAccent(el, color) {
+      const accentMap = {
+        green:  'border-l-emerald-500',
+        red:    'border-l-red-500',
+        yellow: 'border-l-yellow-500',
+        gray:   'border-l-gray-700',
+      };
+      ['border-l-emerald-500','border-l-red-500','border-l-yellow-500','border-l-gray-700'].forEach(c => el.classList.remove(c));
+      el.classList.add(accentMap[color] || accentMap.gray);
+    }
+
+    function renderError(el, label, msg) {
+      setAccent(el, 'red');
+      el.querySelector('.panel-status').innerHTML = badge('DOWN', 'red');
+      el.querySelector('.panel-body').innerHTML =
+        `<p class="text-red-400/80 text-xs">${msg}</p>`;
+    }
+
+    // ─── Panel Renderers ──────────────────────────────────────────────────────
+
+    function renderHealth(el, data) {
+      const online = data && data.status === 'ok';
+      setAccent(el, online ? 'green' : 'red');
+      el.querySelector('.panel-status').innerHTML = '';
+      el.querySelector('.panel-body').innerHTML = online
+        ? `<div class="flex items-center gap-3">
+             ${badge('ONLINE', 'green')}
+             <span class="text-gray-500 text-xs">OpenViking reachable</span>
+           </div>`
+        : `<div class="flex items-center gap-3">
+             ${badge('OFFLINE', 'red')}
+             <span class="text-gray-500 text-xs">Server not responding</span>
+           </div>`;
+    }
+
+    function renderSystem(el, data) {
+      const r = data && (data.result || data);
+      if (!r) { renderError(el, 'system', 'No data'); return; }
+      const initialized = r.initialized;
+      const user = r.user || '—';
+      setAccent(el, initialized ? 'green' : 'yellow');
+      el.querySelector('.panel-status').innerHTML = badge(initialized ? 'READY' : 'INIT', initialized ? 'green' : 'yellow');
+      el.querySelector('.panel-body').innerHTML =
+        `<div class="flex flex-col gap-1.5">
+           <div class="flex items-center justify-between">
+             <span class="text-gray-500 text-xs">Initialized</span>
+             ${badge(initialized ? 'yes' : 'no', initialized ? 'green' : 'yellow')}
+           </div>
+           <div class="flex items-center justify-between">
+             <span class="text-gray-500 text-xs">User</span>
+             <span class="text-amber-400/80 text-xs truncate max-w-32">${user}</span>
+           </div>
+         </div>`;
+    }
+
+    function renderComponent(panelId, comp) {
+      const el = document.getElementById(panelId);
+      if (!el || !comp) return;
+      const healthy = comp.is_healthy;
+      setAccent(el, healthy ? 'green' : 'red');
+      el.querySelector('.panel-status').innerHTML = badge(healthy ? 'OK' : 'ERR', healthy ? 'green' : 'red');
+      el.querySelector('.panel-body').innerHTML =
+        `<div class="flex flex-col gap-1.5">
+           <div class="flex items-center justify-between">
+             <span class="text-gray-500 text-xs">Health</span>
+             ${badge(healthy ? 'healthy' : 'unhealthy', healthy ? 'green' : 'red')}
+           </div>
+           <div class="flex items-center justify-between">
+             <span class="text-gray-500 text-xs">Status</span>
+             <span class="text-gray-300 text-xs truncate max-w-36">${comp.status || '—'}</span>
+           </div>
+           ${comp.has_errors ? `<div class="mt-1">${badge('has errors', 'red')}</div>` : ''}
+         </div>`;
+    }
+
+    function renderObserver(el, data) {
+      const r = data && (data.result || data);
+      if (!r || !r.components) {
+        ['queue','vikingdb','vlm','transaction'].forEach(id => {
+          const p = document.getElementById(`panel-${id}`);
+          if (p) renderError(p, id, 'No observer data');
+        });
+        return;
+      }
+      renderComponent('panel-queue',       r.components.queue);
+      renderComponent('panel-vikingdb',    r.components.vikingdb);
+      renderComponent('panel-vlm',         r.components.vlm);
+      renderComponent('panel-transaction', r.components.transaction);
+    }
+
+    function renderEmbedding(el, data) {
+      const models = data && data.data;
+      const online = Array.isArray(models) && models.length > 0;
+      setAccent(el, online ? 'green' : 'red');
+      el.querySelector('.panel-status').innerHTML = badge(online ? 'ONLINE' : 'OFFLINE', online ? 'green' : 'red');
+      if (online) {
+        const model = models[0].id || '—';
+        el.querySelector('.panel-body').innerHTML =
+          `<div class="flex flex-col gap-1.5">
+             <div class="flex items-center justify-between">
+               <span class="text-gray-500 text-xs">Model</span>
+             </div>
+             <span class="text-amber-400/80 text-xs break-all">${model}</span>
+             <div class="flex items-center justify-between mt-1">
+               <span class="text-gray-500 text-xs">Port</span>
+               <span class="text-gray-400 text-xs">8001</span>
+             </div>
+           </div>`;
+      } else {
+        el.querySelector('.panel-body').innerHTML =
+          `<p class="text-red-400/80 text-xs">Embedding server not reachable</p>
+           <p class="text-gray-600 text-xs">Expected at port 8001</p>`;
+      }
+    }
+
+    function renderSessions(el, data) {
+      let sessions = [];
+      if (data) {
+        if (Array.isArray(data)) sessions = data;
+        else if (Array.isArray(data.result)) sessions = data.result;
+        else if (data.result && typeof data.result === 'object') sessions = Object.values(data.result);
+      }
+      const count = sessions.length;
+      setAccent(el, 'green');
+      el.querySelector('.panel-status').innerHTML = badge(`${count}`, count > 0 ? 'amber' : 'gray');
+      if (count === 0) {
+        el.querySelector('.panel-body').innerHTML =
+          `<p class="text-gray-600 text-xs">No active sessions</p>`;
+      } else {
+        const items = sessions.slice(0, 8).map(s => {
+          const id = s.session_id || s.id || JSON.stringify(s);
+          return `<div class="text-xs text-amber-400/70 truncate">${id}</div>`;
+        }).join('');
+        const more = count > 8 ? `<div class="text-xs text-gray-600 mt-1">+ ${count - 8} more</div>` : '';
+        el.querySelector('.panel-body').innerHTML =
+          `<div class="text-xs text-gray-400 mb-1">${count} session${count !== 1 ? 's' : ''}</div>
+           <div class="flex flex-col gap-0.5">${items}${more}</div>`;
+      }
+    }
+
+    function renderFilesystem(el, data) {
+      let items = [];
+      if (data) {
+        if (Array.isArray(data)) items = data;
+        else if (Array.isArray(data.result)) items = data.result;
+      }
+      setAccent(el, 'green');
+      el.querySelector('.panel-status').innerHTML = `<span class="text-gray-600 text-xs">viking://</span>`;
+      if (items.length === 0) {
+        el.querySelector('.panel-body').innerHTML =
+          `<p class="text-gray-600 text-xs">Empty context filesystem</p>`;
+        return;
+      }
+      const visible = items.slice(0, 20);
+      const rows = visible.map(item => {
+        const t = (item.type || '').toLowerCase();
+        const icon = (t.includes('dir') || t.includes('folder')) ? '📁' : '📄';
+        const name = item.name || item.uri || '?';
+        const uri = item.uri || '';
+        return `<div class="flex items-center gap-1.5 py-0.5">
+                  <span class="flex-shrink-0">${icon}</span>
+                  <span class="text-gray-300 text-xs truncate" title="${uri}">${name}</span>
+                </div>`;
+      }).join('');
+      const more = items.length > 20
+        ? `<div class="text-xs text-gray-600 pt-1">+ ${items.length - 20} more</div>`
+        : '';
+      el.querySelector('.panel-body').innerHTML =
+        `<div class="flex flex-col">${rows}${more}</div>`;
+    }
+
+    // ─── Poll Orchestrator ────────────────────────────────────────────────────
+
+    async function poll() {
+      const dot = document.getElementById('refreshDot');
+      dot.classList.add('animate-ping');
+
+      const base = state.ovUrl;
+
+      const [health, system, observer, filesystem, sessions, embedding] =
+        await Promise.allSettled([
+          apiFetch(`${base}/health`),
+          apiFetch(`${base}/api/v1/system/status`),
+          apiFetch(`${base}/api/v1/observer/system`),
+          apiFetch(`${base}/api/v1/fs/ls?uri=viking://`),
+          apiFetch(`${base}/api/v1/sessions`),
+          apiFetch(`${EMBED_URL}/v1/models`),
+        ]);
+
+      function val(settled) { return settled.status === 'fulfilled' ? settled.value : { ok: false, error: 'Promise rejected' }; }
+
+      const healthResult = val(health);
+      const el = (id) => document.getElementById(id);
+
+      if (healthResult.ok) renderHealth(el('panel-health'), healthResult.data);
+      else renderError(el('panel-health'), 'health', healthResult.error);
+
+      const sysResult = val(system);
+      if (sysResult.ok) renderSystem(el('panel-system'), sysResult.data);
+      else renderError(el('panel-system'), 'system', sysResult.error);
+
+      const obsResult = val(observer);
+      if (obsResult.ok) renderObserver(el('panel-queue'), obsResult.data);
+      else ['queue','vikingdb','vlm','transaction'].forEach(id => renderError(el(`panel-${id}`), id, obsResult.error));
+
+      const fsResult = val(filesystem);
+      if (fsResult.ok) renderFilesystem(el('panel-filesystem'), fsResult.data);
+      else renderError(el('panel-filesystem'), 'filesystem', fsResult.error);
+
+      const sessResult = val(sessions);
+      if (sessResult.ok) renderSessions(el('panel-sessions'), sessResult.data);
+      else renderError(el('panel-sessions'), 'sessions', sessResult.error);
+
+      const embedResult = val(embedding);
+      if (embedResult.ok) renderEmbedding(el('panel-embedding'), embedResult.data);
+      else renderError(el('panel-embedding'), 'embedding', embedResult.error);
+
+      document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+      dot.classList.remove('animate-ping');
+    }
+
+    // ─── Init ─────────────────────────────────────────────────────────────────
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('ovUrlInput').addEventListener('change', (e) => {
+        state.ovUrl = e.target.value.trim().replace(/\/$/, '');
+        poll();
+      });
+      poll();
+      setInterval(poll, POLL_MS);
+    });
+  </script>
+</body>
+</html>
+<!-- end dashboard.html -->

@@ -1,0 +1,15 @@
+[project]
+name = "karve"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.0.0",
+    "mlx-embeddings>=0.0.5",
+    "mlx-openai-server>=1.1.2",
+    "openviking>=0.1.17",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
+    "tenacity>=9.1.4",
+]
