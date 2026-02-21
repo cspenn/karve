@@ -30,6 +30,7 @@ EMBED_MODEL=$(read_config "embedding.model")
 EMBED_BASE_PORT=$(read_config "embedding.base_port")
 EMBED_HOST=$(read_config "embedding.host")
 EMBED_TIMEOUT=$(read_config "embedding.health_timeout_seconds")
+EMBED_DIMENSION=$(read_config "embedding.dimension")
 OV_BASE_PORT=$(read_config "openviking.base_port")
 OV_HOST=$(read_config "openviking.host")
 OV_TIMEOUT=$(read_config "openviking.health_timeout_seconds")
@@ -86,7 +87,9 @@ fi
 
 # ─── Write ov.conf ────────────────────────────────────────────────────────────
 # Regenerated each run so embedding port is always accurate.
+# Delete first to prevent stale keys from prior versions accumulating.
 
+rm -f "$OV_CONF_DIR/ov.conf"
 cat > "$OV_CONF_DIR/ov.conf" <<EOF
 {
   "embedding": {
@@ -94,7 +97,8 @@ cat > "$OV_CONF_DIR/ov.conf" <<EOF
       "api_base": "http://${EMBED_HOST}:${EMBED_PORT}/v1",
       "api_key": "not-needed",
       "provider": "openai",
-      "model": "${EMBED_MODEL}"
+      "model": "${EMBED_MODEL}",
+      "dimension": ${EMBED_DIMENSION}
     }
   }
 }

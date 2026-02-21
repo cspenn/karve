@@ -5,6 +5,7 @@ embedding:
   base_port: 8000
   host: 127.0.0.1
   health_timeout_seconds: 300    # first run downloads ~4GB model
+  dimension: 2560                # Qwen3-Embedding-4B output dimensionality
 
 openviking:
   base_port: 1933

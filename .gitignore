@@ -22,3 +22,9 @@ output/
 
 # Claude Code project state
 .claude/
+
+# Coverage artifacts
+.coverage
+
+# pyenv version pin (local to developer machine)
+.python-version

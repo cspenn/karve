@@ -320,7 +320,7 @@
         else if (Array.isArray(data.result)) items = data.result;
       }
       setAccent(el, 'green');
-      el.querySelector('.panel-status').innerHTML = `<span class="text-gray-600 text-xs">viking://</span>`;
+      el.querySelector('.panel-status').innerHTML = `<span class="text-gray-600 text-xs">viking://resources/</span>`;
       if (items.length === 0) {
         el.querySelector('.panel-body').innerHTML =
           `<p class="text-gray-600 text-xs">Empty context filesystem</p>`;
@@ -357,7 +357,7 @@
           apiFetch(`${base}/health`),
           apiFetch(`${base}/api/v1/system/status`),
           apiFetch(`${base}/api/v1/observer/system`),
-          apiFetch(`${base}/api/v1/fs/ls?uri=viking://`),
+          apiFetch(`${base}/api/v1/fs/ls?uri=viking://resources/`),
           apiFetch(`${base}/api/v1/sessions`),
           apiFetch(`${EMBED_URL}/v1/models`),
         ]);
