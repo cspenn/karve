@@ -1,0 +1,10 @@
+{
+  "name": "karve",
+  "version": "0.1.0",
+  "description": "Persistent semantic memory for Claude Code — local embeddings via OpenViking",
+  "author": {
+    "name": "Christopher Penn"
+  },
+  "license": "MIT",
+  "keywords": ["memory", "embeddings", "openviking", "semantic-search", "mcp"]
+}

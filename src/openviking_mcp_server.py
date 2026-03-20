@@ -9,6 +9,7 @@ Uses a class-based connection manager with tenacity retry logic.
 import json
 import logging
 import os
+import re
 import socket
 import tempfile
 import threading
@@ -28,12 +29,13 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
+(Path.home() / ".openviking" / "logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(Path(__file__).parent.parent / "logs" / "openviking_mcp.log"),
+        logging.FileHandler(Path.home() / ".openviking" / "logs" / "openviking_mcp.log"),
     ],
 )
 logger = logging.getLogger("openviking_mcp")
@@ -65,6 +67,7 @@ def _load_credentials() -> OpenVikingCreds:
 
     Raises:
         FileNotFoundError: If credentials.yml is missing.
+        ValueError: If credentials.yml is malformed YAML or missing 'openviking' key.
         ValidationError: If credentials fail Pydantic validation.
     """
     creds_path = Path(__file__).parent.parent / "credentials.yml"
@@ -73,7 +76,15 @@ def _load_credentials() -> OpenVikingCreds:
             f"credentials.yml not found at {creds_path}. "
             "Copy credentials.yml.dist to credentials.yml and fill in values."
         )
-    raw = yaml.safe_load(creds_path.read_text())
+    try:
+        raw = yaml.safe_load(creds_path.read_text())
+    except yaml.YAMLError as exc:
+        raise ValueError(f"credentials.yml is malformed YAML: {exc}") from exc
+    if not isinstance(raw, dict) or "openviking" not in raw:
+        raise ValueError(
+            "credentials.yml must contain a top-level 'openviking' key with an 'api_key' field. "
+            "See credentials.yml.dist for the expected format."
+        )
     return OpenVikingCreds(**raw["openviking"])
 
 
@@ -97,7 +108,29 @@ _DEFAULT_OPENVIKING_URL: str = "http://localhost:1933"
 _OPENVIKING_URL = _runtime.openviking_url if _runtime else _DEFAULT_OPENVIKING_URL
 _CONTENT_PREVIEW_LEN: int = 300
 _DASHBOARD_HOST: str = "127.0.0.1"
-_PROJECT: str = os.getenv("KARVE_PROJECT", "")
+_SLUG_RE: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_-]*$")
+
+
+def _validate_slug(value: str, label: str) -> str:
+    """Validate that value contains only safe URI-path characters.
+
+    Args:
+        value: The string to validate.
+        label: Human-readable name used in error messages.
+
+    Returns:
+        The validated string, unchanged.
+
+    Raises:
+        ValueError: If value contains characters outside [a-zA-Z0-9_-].
+    """
+    if not _SLUG_RE.match(value):
+        msg = f"{label} contains invalid characters: {value!r}. Only [a-zA-Z0-9_-] allowed."
+        raise ValueError(msg)
+    return value
+
+
+_PROJECT: str = _validate_slug(os.getenv("KARVE_PROJECT", ""), "KARVE_PROJECT")
 _DEFAULT_URI: str = f"viking://user/projects/{_PROJECT}/" if _PROJECT else "viking://"
 
 
@@ -264,6 +297,15 @@ def _make_dashboard_handler(directory: Path) -> type[SimpleHTTPRequestHandler]:
 
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             """Suppress HTTP access logs — MCP server uses stdio."""
+            del format, args  # intentionally unused — suppresses all HTTP access logging
+
+        def do_GET(self) -> None:
+            """Serve only dashboard.html; return 404 for all other paths."""
+            if self.path in ("/", "/dashboard.html"):
+                self.path = "/dashboard.html"
+                super().do_GET()
+            else:
+                self.send_error(404, "Not Found")
 
     return _Handler
 
@@ -278,6 +320,7 @@ async def _lifespan(server: object) -> AsyncGenerator[None, None]:
     Yields:
         None — yields control back to FastMCP during server lifetime.
     """
+    _ = server  # required by FastMCP lifespan protocol; not used directly
     dashboard_dir = Path(__file__).parent.parent
     port = _find_free_port()
     httpd = HTTPServer((_DASHBOARD_HOST, port), _make_dashboard_handler(dashboard_dir))
@@ -289,7 +332,39 @@ async def _lifespan(server: object) -> AsyncGenerator[None, None]:
     httpd.shutdown()
 
 
-mcp = FastMCP("OpenViking", lifespan=_lifespan)
+_MCP_INSTRUCTIONS: str = """\
+Karve gives you persistent semantic memory powered by a local OpenViking server.
+
+## What Karve does
+Stores and retrieves memories, decisions, code snippets, and project context as
+semantic embeddings on your local machine. Context survives across conversations.
+
+## Tools available
+- viking_search(query, uri?, limit?)      — fast semantic search (use first)
+- viking_deep_search(query, uri?, limit?) — intent-aware search with query expansion
+- viking_read(uri, depth?)                — read a specific resource (abstract/overview/full)
+- viking_list(uri?)                       — browse the context filesystem
+- viking_remember(text, category?, name?) — store text for future retrieval
+- viking_status()                         — check server health
+- viking_check_context(uri?)              — discover available project memory at startup
+- viking_initial_instructions()           — re-read these instructions if needed
+
+## When to use Karve
+- Start of conversation: call viking_check_context() to discover available project memory
+- Discovering something important: call viking_remember() to persist it
+- Before a complex task: call viking_deep_search() to gather prior decisions
+- Need to browse what's stored: call viking_list()
+
+## URI structure
+- viking://                              — global namespace
+- viking://user/projects/<project>/     — project-scoped (set KARVE_PROJECT env var)
+
+## Setup
+Karve requires a running OpenViking server. Check status with viking_status().
+If not running: ./scripts/start_openviking.sh
+"""
+
+mcp = FastMCP("OpenViking", lifespan=_lifespan, instructions=_MCP_INSTRUCTIONS)
 
 
 @mcp.tool
@@ -364,6 +439,11 @@ def viking_read(
             "full": client.read,
             "overview": client.overview,
         }
+        if depth not in {"abstract", "overview", "full"}:
+            return (
+                f"viking_read failed: invalid depth {depth!r}. "
+                "Choose 'abstract', 'overview', or 'full'."
+            )
         return str(dispatch[depth](uri))
     except (OpenVikingError, OSError) as exc:
         logger.error("viking_read failed for %s: %s", uri, exc)
@@ -414,6 +494,10 @@ def viking_remember(text: str, category: str = "memory", name: str = "") -> str:
     Returns:
         Confirmation string with the stored URI.
     """
+    try:
+        _validate_slug(category, "category")
+    except ValueError as exc:
+        return f"viking_remember failed: {exc}"
     tmp_path = _write_temp_resource(text, name)
     try:
         target = (
@@ -459,6 +543,69 @@ def viking_status() -> str:
             f"✗ OpenViking not reachable at {_OPENVIKING_URL}\n"
             f"Error: {exc}\n"
             f"Run: ./scripts/start_openviking.sh"
+        )
+
+
+@mcp.tool
+def viking_initial_instructions() -> str:
+    """Return Karve usage instructions for clients that do not read MCP server instructions.
+
+    IMPORTANT: If you have not yet reviewed how to use Karve's memory tools, call this
+    tool immediately before beginning any task — it critically informs you how to use
+    persistent memory effectively across conversations.
+
+    Returns:
+        Full Karve instructions including available tools, URI structure, and usage patterns.
+    """
+    return _MCP_INSTRUCTIONS
+
+
+@mcp.tool
+def viking_check_context(uri: str | None = None) -> str:
+    """Discover what context is stored in Karve for the current project scope.
+
+    Call this tool at the start of any non-trivial task to discover relevant stored
+    memories, decisions, and resources before beginning work. Results tell you what
+    prior context exists and which categories to search.
+
+    Args:
+        uri: Scope to check. Defaults to the project scope when KARVE_PROJECT is set,
+             otherwise the global 'viking://' namespace.
+
+    Returns:
+        Summary of available context — categories found and next steps.
+    """
+    effective_uri = uri if uri is not None else _DEFAULT_URI
+    try:
+        items = _viking.get().ls(effective_uri)
+        if not items:
+            return (
+                f"No context stored at {effective_uri}.\n"
+                "Use viking_remember() to start building your project memory, "
+                "or set KARVE_PROJECT to scope to a project namespace."
+            )
+        categories: dict[str, int] = {}
+        for item in items:
+            kind = getattr(item, "type", "")
+            name = getattr(item, "name", str(item))
+            if kind == "directory":
+                categories[name] = categories.get(name, 0)
+            else:
+                parent = effective_uri.rstrip("/").rsplit("/", 1)[-1]
+                categories[parent] = categories.get(parent, 0) + 1
+        lines = [f"Context available at {effective_uri}:"]
+        for name, count in sorted(categories.items()):
+            lines.append(f"  - {name}/ ({count} items)" if count else f"  - {name}/")
+        lines.append(
+            "\nNext steps: use viking_search() to find relevant context, "
+            "or viking_list() to browse specific categories."
+        )
+        return "\n".join(lines)
+    except (OpenVikingError, OSError) as exc:
+        logger.error("viking_check_context failed for %s: %s", effective_uri, exc)
+        return (
+            f"viking_check_context failed for {effective_uri}: {exc}\n"
+            "Is the OpenViking server running? Try viking_status()."
         )
 
 

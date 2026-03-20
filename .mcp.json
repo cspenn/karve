@@ -1,0 +1,6 @@
+{
+  "karve": {
+    "command": "uv",
+    "args": ["--project", "${CLAUDE_PLUGIN_ROOT}", "run", "python", "src/openviking_mcp_server.py"]
+  }
+}

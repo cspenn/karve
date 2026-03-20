@@ -4,6 +4,7 @@
 Invokes the OpenViking MCP server via its own __main__ guard.
 Run with: python -m karve.main  (or via uv run)
 """
+
 import subprocess
 import sys
 

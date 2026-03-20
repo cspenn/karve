@@ -11,6 +11,7 @@ wheels/
 
 # Secrets — never commit
 credentials.yml
+config.yml
 
 # Runtime artefacts
 logs/
@@ -25,7 +26,6 @@ output/
 
 # Private — not distributed publicly
 docs/
-tests/
 checkpython.sh
 
 # Coverage artifacts
